@@ -1,10 +1,16 @@
-# :earth_americas: GDP dashboard template
+# CanalCerto – Dashboard de Canais de Agendamento
 
-A simple Streamlit app showing the GDP of different countries in the world.
+Um app simples em **Streamlit** que simula a visão analítica do CanalCerto, mostrando o desempenho dos diferentes canais de agendamento (WhatsApp, SMS, E-mail, App, Telefone), incluindo:
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://gdp-dashboard-template.streamlit.app/)
+- Volume de atendimentos  
+- Taxa de realização e cancelamento  
+- Faturamento e lucro estimado  
+- Perfil dos pacientes por canal (idade e sexo)
 
-### How to run it on your own machine
+---
+
+### Como rodar localmente
+
 
 1. Install the requirements
 
