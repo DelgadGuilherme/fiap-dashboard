@@ -2,10 +2,46 @@ import os
 import numpy as np
 import pandas as pd
 import streamlit as st
+import altair as alt
 
-# -------------------------------------------------------------
-# Configuração da página
-# -------------------------------------------------------------
+# ============================
+# CanalCerto Color Palette (from logo)
+# ============================
+
+LOGO_PINK = "#FF66C4"
+LOGO_PURPLE = "#C266FF"
+LOGO_BLUE = "#66C4FF"
+
+PINK_LIGHT = "#FF99D9"
+PINK_MEDIUM = "#FF66C4"
+PINK_DARK = "#CC529D"
+
+PURPLE_LIGHT = "#D699FF"
+PURPLE_MEDIUM = "#C266FF"
+PURPLE_DARK = "#9B52CC"
+
+BLUE_LIGHT = "#99D9FF"
+BLUE_MEDIUM = "#66C4FF"
+BLUE_DARK = "#529FCC"
+
+# Sexo
+GENDER_COLOR_SCALE = alt.Scale(
+    domain=["Feminino", "Masculino"],
+    range=[PINK_MEDIUM, BLUE_MEDIUM],
+)
+
+# Canais (até 5 canais distintos)
+CHANNEL_COLOR_BASE = [PINK_MEDIUM, PURPLE_MEDIUM, BLUE_MEDIUM, PINK_DARK, BLUE_DARK]
+
+# Faixas etárias (a partir de 18)
+AGE_COLOR_SCALE = alt.Scale(
+    domain=["18-25", "26-35", "36-45", "46-60", "60+"],
+    range=[BLUE_LIGHT, BLUE_MEDIUM, BLUE_DARK, PURPLE_LIGHT, PURPLE_MEDIUM],
+)
+
+# ============================
+# Page config
+# ============================
 st.set_page_config(
     page_title="CanalCerto - Protótipo",
     layout="wide",
@@ -23,12 +59,53 @@ e **perfil dos pacientes por canal de agendamento**.
 """
 )
 
-# -------------------------------------------------------------
-# 1. Carregar base de dados (arquivo local)
-# -------------------------------------------------------------
+# ============================
+# Helper – styled insight boxes
+# ============================
+
+def insight_box(text: str, tone: str = "info", icon: str = "ℹ️"):
+    tones = {
+        "info": {
+            "bg": "linear-gradient(90deg,#020617,#0f172a)",
+            "border": LOGO_BLUE,
+        },
+        "success": {
+            "bg": "linear-gradient(90deg,#022c22,#0f172a)",
+            "border": "#22c55e",
+        },
+        "warning": {
+            "bg": "linear-gradient(90deg,#422006,#0f172a)",
+            "border": "#eab308",
+        },
+        "danger": {
+            "bg": "linear-gradient(90deg,#450a0a,#0f172a)",
+            "border": "#ef4444",
+        },
+    }
+
+    style = tones.get(tone, tones["info"])
+
+    html = f"""
+    <div style="
+        border-radius: 10px;
+        padding: 10px 16px;
+        margin-bottom: 8px;
+        border: 1px solid {style['border']};
+        background: {style['bg']};
+        color: #e5e7eb;
+        font-size: 0.95rem;
+    ">
+        <span style="margin-right:8px;">{icon}</span>{text}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ============================
+# 1. Load data
+# ============================
+
 DATA_PATH = os.path.join("data", "dataset_canalcerto.csv")
-# Se o seu arquivo tiver outro nome, ajuste a linha acima, por exemplo:
-# DATA_PATH = os.path.join("data", "dataset_canalcerto_10000_completo.csv")
 
 st.sidebar.header("1. Carregar base de dados")
 st.sidebar.success(f"Usando arquivo local:\n`{DATA_PATH}`")
@@ -36,10 +113,9 @@ st.sidebar.success(f"Usando arquivo local:\n`{DATA_PATH}`")
 
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    # Garantir que a coluna de data esteja em datetime
-    df["data_atendimento"] = pd.to_datetime(df["data_atendimento"])
-    return df
+    df_local = pd.read_csv(path)
+    df_local["data_atendimento"] = pd.to_datetime(df_local["data_atendimento"])
+    return df_local
 
 
 try:
@@ -50,383 +126,603 @@ except FileNotFoundError:
 
 st.info(f"Base carregada com **{len(df):,}** atendimentos.".replace(",", "."))
 
-# -------------------------------------------------------------
-# Mapeamento fixo das colunas (dataset padronizado)
-# -------------------------------------------------------------
-col_id = "id_atendimento"
-col_data = "data_atendimento"
-col_mes = "mes_referencia"
-col_paciente = "paciente_id"
-col_sexo = "sexo_paciente"
-col_idade = "idade_paciente"
-col_canal = "canal_atendimento"
-col_tipo = "tipo_atendimento"
-col_especialidade = "especialidade"
-col_status = "status_atendimento"
-col_valor_bruto = "valor_bruto"
-col_custo = "custo_operacional"
-col_lucro = "lucro_liquido"
-col_retorno_positivo = "retorno_positivo"
+# Column mapping
+id_col = "id_atendimento"
+date_col = "data_atendimento"
+month_col = "mes_referencia"
+patient_col = "paciente_id"
+gender_col = "sexo_paciente"
+age_col = "idade_paciente"
+channel_col = "canal_atendimento"
+type_col = "tipo_atendimento"
+specialty_col = "especialidade"
+status_col = "status_atendimento"
+gross_value_col = "valor_bruto"
+cost_col = "custo_operacional"
+profit_col = "lucro_liquido"
+positive_return_col = "retorno_positivo"
 
-# -------------------------------------------------------------
-# 2. Filtros na sidebar
-# -------------------------------------------------------------
+# ============================
+# 2. Filters
+# ============================
+
 st.sidebar.header("2. Filtros")
 
-# Período
-min_date = df[col_data].min()
-max_date = df[col_data].max()
+min_date = df[date_col].min()
+max_date = df[date_col].max()
 
-periodo = st.sidebar.date_input(
+period = st.sidebar.date_input(
     "Período de agendamento",
     value=(min_date, max_date),
     min_value=min_date,
     max_value=max_date,
 )
 
-if isinstance(periodo, tuple):
-    data_inicio, data_fim = periodo
+if isinstance(period, tuple):
+    start_date, end_date = period
 else:
-    data_inicio, data_fim = min_date, max_date
+    start_date, end_date = min_date, max_date
 
-# Canal
-canais = sorted(df[col_canal].dropna().unique().tolist())
-canais_sel = st.sidebar.multiselect(
+channels = sorted(df[channel_col].dropna().unique().tolist())
+selected_channels = st.sidebar.multiselect(
     "Canais de agendamento",
-    options=canais,
-    default=canais,
+    options=channels,
+    default=channels,
 )
 
-# Status
-status_opts = sorted(df[col_status].dropna().unique().tolist())
-status_sel = st.sidebar.multiselect(
+status_options = sorted(df[status_col].dropna().unique().tolist())
+selected_status = st.sidebar.multiselect(
     "Status do atendimento",
-    options=status_opts,
-    default=status_opts,
+    options=status_options,
+    default=status_options,
 )
 
-# Sexo
-sexos = sorted(df[col_sexo].dropna().unique().tolist())
-sexo_sel = st.sidebar.multiselect(
+genders = sorted(df[gender_col].dropna().unique().tolist())
+selected_genders = st.sidebar.multiselect(
     "Sexo do paciente",
-    options=sexos,
-    default=sexos,
+    options=genders,
+    default=genders,
 )
 
-# Faixa etária (slider apenas informativo)
-idade_min = int(df[col_idade].min())
-idade_max = int(df[col_idade].max())
-faixa_idade = st.sidebar.slider(
+age_min = int(df[age_col].min())
+age_max = int(df[age_col].max())
+selected_age_range = st.sidebar.slider(
     "Faixa de idade",
-    min_value=idade_min,
-    max_value=idade_max,
-    value=(idade_min, idade_max),
+    min_value=age_min,
+    max_value=age_max,
+    value=(age_min, age_max),
 )
 
-# -------------------------------------------------------------
-# Aplicando filtros
-# -------------------------------------------------------------
-mask = (
-    (df[col_data].dt.date >= data_inicio)
-    & (df[col_data].dt.date <= data_fim)
-    & (df[col_canal].isin(canais_sel))
-    & (df[col_status].isin(status_sel))
-    & (df[col_sexo].isin(sexo_sel))
-    & (df[col_idade].between(faixa_idade[0], faixa_idade[1]))
+filter_mask = (
+    (df[date_col].dt.date >= start_date)
+    & (df[date_col].dt.date <= end_date)
+    & (df[channel_col].isin(selected_channels))
+    & (df[status_col].isin(selected_status))
+    & (df[gender_col].isin(selected_genders))
+    & (df[age_col].between(selected_age_range[0], selected_age_range[1]))
 )
 
-df_filt = df.loc[mask].copy()
+filtered_df = df.loc[filter_mask].copy()
 
 st.markdown("### Visão geral dos atendimentos filtrados")
-st.write(f"Registros após filtros: **{len(df_filt):,}**".replace(",", "."))
+st.write(f"Registros após filtros: **{len(filtered_df):,}**".replace(",", "."))
 
-if df_filt.empty:
+if filtered_df.empty:
     st.warning("Nenhum dado encontrado com os filtros selecionados. Ajuste os filtros na barra lateral.")
     st.stop()
 
-# -------------------------------------------------------------
-# 3. KPIs principais
-# -------------------------------------------------------------
-total_atend = len(df_filt)
-realizados = (df_filt[col_status] == "Realizado").sum()
-cancelados = (df_filt[col_status] == "Cancelado").sum()
-nao_compareceu = (df_filt[col_status] == "Não compareceu").sum()
+# ============================
+# 3. KPIs
+# ============================
 
-faturamento_total = df_filt[col_valor_bruto].sum()
-lucro_total = df_filt[col_lucro].sum()
+total_appointments = len(filtered_df)
+done_appointments = (filtered_df[status_col] == "Realizado").sum()
+canceled_appointments = (filtered_df[status_col] == "Cancelado").sum()
+no_show_appointments = (filtered_df[status_col] == "Não compareceu").sum()
 
-ticket_medio = df_filt.loc[df_filt[col_status] == "Realizado", col_valor_bruto].mean()
+total_revenue = filtered_df[gross_value_col].sum()
+total_profit = filtered_df[profit_col].sum()
 
-col1, col2, col3, col4 = st.columns(4)
+avg_ticket = filtered_df.loc[filtered_df[status_col] == "Realizado", gross_value_col].mean()
 
-with col1:
-    st.metric("Total de atendimentos", f"{total_atend:,}".replace(",", "."))
-with col2:
-    perc_real = realizados / total_atend * 100 if total_atend > 0 else 0
-    st.metric("Taxa de realização", f"{perc_real:.1f}%")
-with col3:
-    perc_canc = cancelados / total_atend * 100 if total_atend > 0 else 0
-    st.metric("Taxa de cancelamento", f"{perc_canc:.1f}%")
-with col4:
-    st.metric("Ticket médio (realizados)", f"R$ {ticket_medio:,.2f}" if not np.isnan(ticket_medio) else "R$ 0,00".replace(",", "."))
+col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
-col5, col6 = st.columns(2)
+with col_kpi1:
+    st.metric("Total de atendimentos", f"{total_appointments:,}".replace(",", "."))
+with col_kpi2:
+    done_rate = done_appointments / total_appointments * 100 if total_appointments > 0 else 0
+    st.metric("Taxa de realização", f"{done_rate:.2f}%")
+with col_kpi3:
+    cancel_rate = canceled_appointments / total_appointments * 100 if total_appointments > 0 else 0
+    st.metric("Taxa de cancelamento", f"{cancel_rate:.2f}%")
+with col_kpi4:
+    ticket_label = f"R$ {avg_ticket:,.2f}" if not np.isnan(avg_ticket) else "R$ 0,00"
+    st.metric("Ticket médio (realizados)", ticket_label.replace(",", "."))
 
-with col5:
-    st.metric("Faturamento total (bruto)", f"R$ {faturamento_total:,.2f}".replace(",", "."))
-with col6:
-    st.metric("Lucro total (estimado)", f"R$ {lucro_total:,.2f}".replace(",", "."))
+col_kpi5, col_kpi6 = st.columns(2)
+
+with col_kpi5:
+    st.metric("Faturamento total (bruto)", f"R$ {total_revenue:,.2f}".replace(",", "."))
+with col_kpi6:
+    st.metric("Lucro total (estimado)", f"R$ {total_profit:,.2f}".replace(",", "."))
 
 st.markdown("---")
 
-# -------------------------------------------------------------
-# 4. Análises por canal
-# -------------------------------------------------------------
+# ============================
+# 4. Performance by channel
+# ============================
+
 st.markdown("## Desempenho por canal de agendamento")
 
-grupo_canal = (
-    df_filt
-    .groupby(col_canal)
+channel_group = (
+    filtered_df
+    .groupby(channel_col)
     .agg(
-        atendimentos=(col_id, "count"),
-        realizados=(col_status, lambda x: (x == "Realizado").sum()),
-        cancelados=(col_status, lambda x: (x == "Cancelado").sum()),
-        nao_compareceu=(col_status, lambda x: (x == "Não compareceu").sum()),
-        faturamento=(col_valor_bruto, "sum"),
-        lucro=(col_lucro, "sum"),
+        appointments=(id_col, "count"),
+        done=(status_col, lambda x: (x == "Realizado").sum()),
+        canceled=(status_col, lambda x: (x == "Cancelado").sum()),
+        no_show=(status_col, lambda x: (x == "Não compareceu").sum()),
+        revenue=(gross_value_col, "sum"),
+        profit=(profit_col, "sum"),
     )
 )
 
-grupo_canal["taxa_conversao"] = (
-    grupo_canal["realizados"] / grupo_canal["atendimentos"] * 100
-).round(1)
+channel_group["conversion_rate"] = (
+    channel_group["done"] / channel_group["appointments"] * 100
+).round(2)
 
-grupo_canal["taxa_cancelamento"] = (
-    grupo_canal["cancelados"] / grupo_canal["atendimentos"] * 100
-).round(1)
+channel_group["cancel_rate"] = (
+    channel_group["canceled"] / channel_group["appointments"] * 100
+).round(2)
 
-grupo_canal["ticket_medio"] = (
-    grupo_canal["faturamento"] / grupo_canal["realizados"]
+channel_group["avg_ticket"] = (
+    channel_group["revenue"] / channel_group["done"]
 ).replace([np.inf, -np.inf], np.nan).round(2)
 
-# Ordenar por faturamento
-grupo_canal = grupo_canal.sort_values("faturamento", ascending=False)
+channel_group = channel_group.sort_values("revenue", ascending=False)
+channel_group_df = channel_group.reset_index()
 
-st.markdown("### Tabela resumo por canal")
-st.dataframe(
-    grupo_canal.style.format(
-        {
-            "faturamento": "R$ {:,.2f}".format,
-            "lucro": "R$ {:,.2f}".format,
-            "ticket_medio": "R$ {:,.2f}".format,
-        }
-    ),
-    use_container_width=True,
+# escala global de cor para canais
+channel_domain = channel_group_df[channel_col].tolist()
+channel_color_scale = alt.Scale(
+    domain=channel_domain,
+    range=CHANNEL_COLOR_BASE[: len(channel_domain)],
 )
 
-col_g1, col_g2 = st.columns(2)
+# Tabela com nomes em português
+channel_table = channel_group_df.rename(
+    columns={
+        channel_col: "canal_atendimento",
+        "appointments": "atendimentos",
+        "done": "realizados",
+        "canceled": "cancelados",
+        "no_show": "nao_compareceu",
+        "revenue": "faturamento",
+        "profit": "lucro",
+        "conversion_rate": "taxa_conversao",
+        "cancel_rate": "taxa_cancelamento",
+        "avg_ticket": "ticket_medio",
+    }
+)
 
-with col_g1:
+# Construir tabela com nomes em português e colunas formatadas
+channel_table = (
+    channel_group_df
+    .assign(
+        taxa_conversao=lambda d: d["conversion_rate"].map(lambda v: f"{v:.2f}%"),
+        taxa_cancelamento=lambda d: d["cancel_rate"].map(lambda v: f"{v:.2f}%"),
+        faturamento=lambda d: d["revenue"].map(lambda v: f"R$ {v:,.2f}".replace(",", ".")),
+        lucro=lambda d: d["profit"].map(lambda v: f"R$ {v:,.2f}".replace(",", ".")),
+        ticket_medio=lambda d: d["avg_ticket"].map(lambda v: f"R$ {v:,.2f}".replace(",", ".")),
+    )
+    .rename(
+        columns={
+            channel_col: "canal_atendimento",
+            "appointments": "atendimentos",
+            "done": "realizados",
+            "canceled": "cancelados",
+            "no_show": "nao_compareceu",
+        }
+    )[
+        [
+            "canal_atendimento",
+            "atendimentos",
+            "realizados",
+            "cancelados",
+            "nao_compareceu",
+            "faturamento",
+            "lucro",
+            "taxa_conversao",
+            "taxa_cancelamento",
+            "ticket_medio",
+        ]
+    ]
+)
+
+st.dataframe(channel_table, use_container_width=True)
+
+col_ch1, col_ch2 = st.columns(2)
+
+with col_ch1:
     st.markdown("#### Atendimentos por canal")
-    st.bar_chart(grupo_canal["atendimentos"])
 
-with col_g2:
+    base_appointments = alt.Chart(channel_group_df).encode(
+        x=alt.X(f"{channel_col}:N", title="Canal"),
+    )
+
+    bars_appointments = base_appointments.mark_bar().encode(
+        y=alt.Y("appointments:Q", title="Nº de atendimentos"),
+        color=alt.Color(f"{channel_col}:N", title="Canal", scale=channel_color_scale),
+        tooltip=[channel_col, "appointments"],
+    )
+
+    line_appointments = base_appointments.mark_line(color="#FFFFFF", point=True).encode(
+        y="appointments:Q"
+    )
+
+    chart_appointments = (bars_appointments + line_appointments).properties(
+        background="transparent"
+    )
+    st.altair_chart(chart_appointments, use_container_width=True)
+
+with col_ch2:
     st.markdown("#### Faturamento por canal")
-    st.bar_chart(grupo_canal["faturamento"])
 
-col_g3, col_g4 = st.columns(2)
+    base_revenue = alt.Chart(channel_group_df).encode(
+        x=alt.X(f"{channel_col}:N", title="Canal"),
+    )
 
-with col_g3:
+    bars_revenue = base_revenue.mark_bar().encode(
+        y=alt.Y("revenue:Q", title="Faturamento (R$)"),
+        color=alt.Color(f"{channel_col}:N", title="Canal", scale=channel_color_scale),
+        tooltip=[channel_col, alt.Tooltip("revenue:Q", format=",.2f")],
+    )
+
+    line_revenue = base_revenue.mark_line(color="#FFFFFF", point=True).encode(
+        y="revenue:Q"
+    )
+
+    chart_revenue = (bars_revenue + line_revenue).properties(background="transparent")
+    st.altair_chart(chart_revenue, use_container_width=True)
+
+col_ch3, col_ch4 = st.columns(2)
+
+with col_ch3:
     st.markdown("#### Taxa de conversão (%) por canal")
-    st.bar_chart(grupo_canal["taxa_conversao"])
 
-with col_g4:
+    base_conv_channel = alt.Chart(channel_group_df).encode(
+        x=alt.X(f"{channel_col}:N", title="Canal"),
+    )
+
+    bars_conv_channel = base_conv_channel.mark_bar().encode(
+        y=alt.Y("conversion_rate:Q", title="Taxa de conversão (%)"),
+        color=alt.Color(f"{channel_col}:N", title="Canal", scale=channel_color_scale),
+        tooltip=[channel_col, "conversion_rate"],
+    )
+
+    line_conv_channel = base_conv_channel.mark_line(color="#FFFFFF", point=True).encode(
+        y="conversion_rate:Q"
+    )
+
+    chart_conv_channel = (bars_conv_channel + line_conv_channel).properties(
+        background="transparent"
+    )
+    st.altair_chart(chart_conv_channel, use_container_width=True)
+
+with col_ch4:
     st.markdown("#### Taxa de cancelamento (%) por canal")
-    st.bar_chart(grupo_canal["taxa_cancelamento"])
+
+    base_cancel_channel = alt.Chart(channel_group_df).encode(
+        x=alt.X(f"{channel_col}:N", title="Canal"),
+    )
+
+    bars_cancel_channel = base_cancel_channel.mark_bar().encode(
+        y=alt.Y("cancel_rate:Q", title="Taxa de cancelamento (%)"),
+        color=alt.Color(f"{channel_col}:N", title="Canal", scale=channel_color_scale),
+        tooltip=[channel_col, "cancel_rate"],
+    )
+
+    line_cancel_channel = base_cancel_channel.mark_line(color="#FFFFFF", point=True).encode(
+        y="cancel_rate:Q"
+    )
+
+    chart_cancel_channel = (bars_cancel_channel + line_cancel_channel).properties(
+        background="transparent"
+    )
+    st.altair_chart(chart_cancel_channel, use_container_width=True)
 
 st.markdown("---")
 
-# -------------------------------------------------------------
-# 5. Perfil dos pacientes (idade, sexo e canais)
-# -------------------------------------------------------------
+# ============================
+# 5. Patient profile
+# ============================
+
 st.markdown("## Perfil dos pacientes")
 
-# Criar faixas etárias padrão
-df_filt["faixa_idade"] = pd.cut(
-    df_filt[col_idade],
+filtered_df["age_group"] = pd.cut(
+    filtered_df[age_col],
     bins=[0, 17, 25, 35, 45, 60, 200],
     labels=["0-17", "18-25", "26-35", "36-45", "46-60", "60+"],
     right=True,
 )
 
-col_p1, col_p2 = st.columns(2)
+valid_age_groups = (
+    filtered_df["age_group"]
+    .value_counts()
+    .loc[lambda x: x > 0]
+    .index
+)
 
-with col_p1:
+filtered_valid_age_df = filtered_df[filtered_df["age_group"].isin(valid_age_groups)]
+
+age_dist_df = (
+    filtered_valid_age_df["age_group"]
+    .value_counts()
+    .rename("appointments")
+    .reset_index()
+    .rename(columns={"index": "age_group"})
+    .sort_values("age_group")
+)
+
+gender_dist_df = (
+    filtered_valid_age_df
+    .groupby(gender_col)[id_col]
+    .count()
+    .reset_index(name="appointments")
+)
+
+conversion_by_age = (
+    filtered_valid_age_df
+    .groupby("age_group")
+    .agg(
+        appointments=(id_col, "count"),
+        done=(status_col, lambda x: (x == "Realizado").sum()),
+        revenue=(gross_value_col, "sum"),
+        profit=(profit_col, "sum"),
+        canceled=(status_col, lambda x: (x == "Cancelado").sum()),
+    )
+)
+
+conversion_by_age["conversion_rate"] = (
+    conversion_by_age["done"] / conversion_by_age["appointments"] * 100
+).round(2)
+
+conversion_by_age["cancel_rate"] = (
+    conversion_by_age["canceled"] / conversion_by_age["appointments"] * 100
+).round(2)
+
+conversion_by_age["avg_profit"] = (
+    conversion_by_age["profit"] / conversion_by_age["appointments"]
+).round(2)
+
+conversion_by_age_df = conversion_by_age.reset_index()
+
+usage_by_age_df = (
+    filtered_valid_age_df
+    .groupby(["age_group", channel_col])[id_col]
+    .count()
+    .reset_index(name="appointments")
+)
+
+col_pf1, col_pf2 = st.columns(2)
+
+with col_pf1:
     st.markdown("#### Distribuição por faixa etária")
-    idade_grp = df_filt["faixa_idade"].value_counts().sort_index()
-    st.bar_chart(idade_grp)
 
-with col_p2:
+    age_chart = (
+        alt.Chart(age_dist_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("age_group:N", title="Faixa etária"),
+            y=alt.Y("appointments:Q", title="Nº de atendimentos"),
+            color=alt.Color("age_group:N", scale=AGE_COLOR_SCALE, title="Faixa etária"),
+            tooltip=["age_group", "appointments"],
+        )
+        .properties(background="transparent")
+    )
+
+    st.altair_chart(age_chart, use_container_width=True)
+
+with col_pf2:
     st.markdown("#### Distribuição por sexo")
-    sexo_grp = df_filt[col_sexo].value_counts()
-    st.bar_chart(sexo_grp)
+
+    gender_chart = (
+        alt.Chart(gender_dist_df)
+        .mark_bar()
+        .encode(
+            x=alt.X(f"{gender_col}:N", title="Sexo"),
+            y=alt.Y("appointments:Q", title="Nº de atendimentos"),
+            color=alt.Color(
+                f"{gender_col}:N",
+                title="Sexo",
+                scale=GENDER_COLOR_SCALE,
+            ),
+            tooltip=[gender_col, "appointments"],
+        )
+        .properties(background="transparent")
+    )
+
+    st.altair_chart(gender_chart, use_container_width=True)
 
 st.markdown("### Conversão e uso de canais por faixa etária")
 
-col_p3, col_p4 = st.columns(2)
+col_pf3, col_pf4 = st.columns(2)
 
-# Conversão por faixa etária
-with col_p3:
-    conv_idade = (
-        df_filt
-        .groupby("faixa_idade")
-        .agg(
-            atendimentos=(col_id, "count"),
-            realizados=(col_status, lambda x: (x == "Realizado").sum()),
-        )
+with col_pf3:
+    base_conv_age = alt.Chart(conversion_by_age_df).encode(
+        x=alt.X("age_group:N", title="Faixa etária"),
     )
-    conv_idade["taxa_conversao"] = (
-        conv_idade["realizados"] / conv_idade["atendimentos"] * 100
-    ).round(1)
+
+    bars_conv_age = base_conv_age.mark_bar().encode(
+        y=alt.Y("conversion_rate:Q", title="Taxa de conversão (%)"),
+        color=alt.Color(
+            "age_group:N",
+            scale=AGE_COLOR_SCALE,
+            title="Faixa etária",
+        ),
+        tooltip=["age_group", "conversion_rate"],
+    )
+
+    line_conv_age = base_conv_age.mark_line(color="#FFFFFF", point=True).encode(
+        y="conversion_rate:Q"
+    )
+
+    conv_age_chart = (bars_conv_age + line_conv_age).properties(
+        background="transparent"
+    )
 
     st.markdown("#### Taxa de conversão (%) por faixa etária")
-    st.bar_chart(conv_idade["taxa_conversao"])
+    st.altair_chart(conv_age_chart, use_container_width=True)
 
-# Uso de canal por faixa etária
-with col_p4:
-    uso_canal_faixa = (
-        df_filt
-        .groupby(["faixa_idade", col_canal])[col_id]
-        .count()
-        .unstack(fill_value=0)
-        .sort_index()
+with col_pf4:
+    st.markdown("#### Uso dos canais por faixa etária (empilhado)")
+
+    usage_chart = (
+        alt.Chart(usage_by_age_df)
+        .mark_bar()
+        .encode(
+            x=alt.X("age_group:N", title="Faixa etária"),
+            y=alt.Y("appointments:Q", title="Nº de atendimentos", stack="zero"),
+            color=alt.Color(
+                f"{channel_col}:N",
+                title="Canal",
+                scale=channel_color_scale,
+            ),
+            tooltip=["age_group", channel_col, "appointments"],
+        )
+        .properties(background="transparent")
     )
 
-    st.markdown("#### Uso dos canais por faixa etária (nº de atendimentos)")
-    st.bar_chart(uso_canal_faixa)
+    st.altair_chart(usage_chart, use_container_width=True)
 
-# -------------------------------------------------------------
-# 6. Insights automáticos
-# -------------------------------------------------------------
+# ============================
+# 6. Automatic insights
+# ============================
+
 st.markdown("## Insights automáticos")
 
-# 6.1 – Insights por canal
 st.markdown("### 📌 Canais de agendamento")
 
-# Canal com maior conversão
-canal_top_conv = grupo_canal.sort_values("taxa_conversao", ascending=False).head(1)
-if not canal_top_conv.empty:
-    nome = canal_top_conv.index[0]
-    conv = canal_top_conv["taxa_conversao"].iloc[0]
-    st.info(
-        f"🔹 **Melhor canal em conversão:** {nome} — taxa de conversão de **{conv:.1f}%** "
-        f"sobre os atendimentos filtrados."
+top_conv_channel = channel_group.sort_values("conversion_rate", ascending=False).head(1)
+if not top_conv_channel.empty:
+    name = top_conv_channel.index[0]
+    conv_value = top_conv_channel["conversion_rate"].iloc[0]
+    insight_box(
+        f"<b>Melhor canal em conversão:</b> {name} — taxa de conversão de "
+        f"<b>{conv_value:.2f}%</b> sobre os atendimentos filtrados.",
+        tone="info",
+        icon="📌",
     )
 
-# Canal com maior faturamento
-canal_top_fat = grupo_canal.sort_values("faturamento", ascending=False).head(1)
-if not canal_top_fat.empty:
-    nome = canal_top_fat.index[0]
-    fat = canal_top_fat["faturamento"].iloc[0]
-    st.info(
-        f"💰 **Canal com maior faturamento:** {nome} — faturamento bruto de "
-        f"**R$ {fat:,.2f}** no período selecionado.".replace(",", ".")
+top_revenue_channel = channel_group.sort_values("revenue", ascending=False).head(1)
+if not top_revenue_channel.empty:
+    name = top_revenue_channel.index[0]
+    revenue_value = top_revenue_channel["revenue"].iloc[0]
+    insight_box(
+        f"<b>Canal com maior faturamento:</b> {name} — faturamento bruto de "
+        f"<b>R$ {revenue_value:,.2f}</b> no período selecionado.".replace(",", "."),
+        tone="info",
+        icon="💰",
     )
 
-# Canal com maior lucro
-canal_top_lucro = grupo_canal.sort_values("lucro", ascending=False).head(1)
-if not canal_top_lucro.empty:
-    nome = canal_top_lucro.index[0]
-    luc = canal_top_lucro["lucro"].iloc[0]
-    st.info(
-        f"📈 **Canal com maior lucro estimado:** {nome} — lucro aproximado de "
-        f"**R$ {luc:,.2f}** para os atendimentos filtrados.".replace(",", ".")
+top_profit_channel = channel_group.sort_values("profit", ascending=False).head(1)
+if not top_profit_channel.empty:
+    name = top_profit_channel.index[0]
+    profit_value = top_profit_channel["profit"].iloc[0]
+    insight_box(
+        f"<b>Canal com maior lucro estimado:</b> {name} — lucro aproximado de "
+        f"<b>R$ {profit_value:,.2f}</b> para os atendimentos filtrados.".replace(",", "."),
+        tone="info",
+        icon="📈",
     )
 
-# Canal com maior taxa de cancelamento
-canal_top_cancel = grupo_canal.sort_values("taxa_cancelamento", ascending=False).head(1)
-if not canal_top_cancel.empty:
-    nome = canal_top_cancel.index[0]
-    canc = canal_top_cancel["taxa_cancelamento"].iloc[0]
-    st.warning(
-        f"⚠️ **Canal com maior taxa de cancelamento:** {nome} — "
-        f"**{canc:.1f}%** dos atendimentos são cancelados."
+top_cancel_channel = channel_group.sort_values("cancel_rate", ascending=False).head(1)
+if not top_cancel_channel.empty:
+    name = top_cancel_channel.index[0]
+    cancel_value = top_cancel_channel["cancel_rate"].iloc[0]
+    insight_box(
+        f"<b>Canal com maior taxa de cancelamento:</b> {name} — "
+        f"<b>{cancel_value:.2f}%</b> dos atendimentos são cancelados.",
+        tone="warning",
+        icon="⚠️",
     )
 
-# Canal com pior conversão (considerando pelo menos 50 atendimentos para evitar ruído)
-grupo_canal_maior_amostra = grupo_canal[grupo_canal["atendimentos"] >= 50]
-if not grupo_canal_maior_amostra.empty:
-    canal_pior_conv = grupo_canal_maior_amostra.sort_values("taxa_conversao", ascending=True).head(1)
-    nome = canal_pior_conv.index[0]
-    conv = canal_pior_conv["taxa_conversao"].iloc[0]
-    st.warning(
-        f"🚨 **Canal com pior conversão (amostra ≥ 50 atendimentos):** {nome} — "
-        f"taxa de conversão de apenas **{conv:.1f}%**."
+large_sample_channels = channel_group[channel_group["appointments"] >= 50]
+if not large_sample_channels.empty:
+    worst_conv_channel = large_sample_channels.sort_values(
+        "conversion_rate", ascending=True
+    ).head(1)
+    name = worst_conv_channel.index[0]
+    conv_value = worst_conv_channel["conversion_rate"].iloc[0]
+    insight_box(
+        f"<b>Canal com pior conversão (amostra ≥ 50 atendimentos):</b> {name} — "
+        f"taxa de conversão de apenas <b>{conv_value:.2f}%</b>.",
+        tone="danger",
+        icon="❗",
     )
 
 st.markdown("---")
 
-# 6.2 – Insights por faixa etária
-st.markdown("### 👥 Faixa etária dos pacientes")
+st.markdown("### 👥 Insights por idade")
 
-# Garante faixas de idade (caso não tenham sido criadas antes)
-if "faixa_idade" not in df_filt.columns:
-    df_filt["faixa_idade"] = pd.cut(
-        df_filt[col_idade],
-        bins=[0, 17, 25, 35, 45, 60, 200],
-        labels=["0-17", "18-25", "26-35", "36-45", "46-60", "60+"],
-        right=True,
+if not conversion_by_age.empty:
+    best_conv_age = conversion_by_age.sort_values("conversion_rate", ascending=False).head(1)
+    age_group_best = best_conv_age.index[0]
+    conv_value = best_conv_age["conversion_rate"].iloc[0]
+
+    insight_box(
+        f"<b>Faixa etária com maior conversão:</b> {age_group_best} — "
+        f"taxa de conversão média de <b>{conv_value:.2f}%</b>.",
+        tone="info",
+        icon="📌",
     )
 
-conv_idade = (
-    df_filt
-    .groupby("faixa_idade")
-    .agg(
-        atendimentos=(col_id, "count"),
-        realizados=(col_status, lambda x: (x == "Realizado").sum()),
-    )
-)
+    best_profit_age = conversion_by_age.sort_values("profit", ascending=False).head(1)
+    age_group_profit = best_profit_age.index[0]
+    profit_value = best_profit_age["profit"].iloc[0]
 
-conv_idade["taxa_conversao"] = (
-    conv_idade["realizados"] / conv_idade["atendimentos"] * 100
-).round(1)
-
-conv_idade = conv_idade[conv_idade["atendimentos"] > 0]
-
-if not conv_idade.empty:
-    faixa_top_conv = conv_idade.sort_values("taxa_conversao", ascending=False).head(1)
-    faixa = faixa_top_conv.index[0]
-    tx = faixa_top_conv["taxa_conversao"].iloc[0]
-    st.info(
-        f"👶👵 **Faixa etária com melhor conversão:** {faixa} — "
-        f"taxa de conversão média de **{tx:.1f}%**."
+    insight_box(
+        f"<b>Faixa etária mais rentável (lucro total):</b> {age_group_profit} — "
+        f"lucro estimado de <b>R$ {profit_value:,.2f}</b>.".replace(",", "."),
+        tone="info",
+        icon="💰",
     )
 
-# Uso de canal por faixa etária – canal predominante em cada faixa
-uso_canal_faixa = (
-    df_filt
-    .groupby(["faixa_idade", col_canal])[col_id]
+    worst_cancel_age = conversion_by_age.sort_values("cancel_rate", ascending=False).head(1)
+    age_group_cancel = worst_cancel_age.index[0]
+    cancel_value = worst_cancel_age["cancel_rate"].iloc[0]
+
+    insight_box(
+        f"<b>Faixa etária com maior taxa de cancelamento:</b> {age_group_cancel} — "
+        f"<b>{cancel_value:.2f}%</b> dos atendimentos são cancelados.",
+        tone="warning",
+        icon="⚠️",
+    )
+
+channel_usage_summary = (
+    filtered_valid_age_df
+    .groupby(["age_group", channel_col])[id_col]
     .count()
-    .reset_index(name="atendimentos")
+    .reset_index(name="appointments")
 )
 
-if not uso_canal_faixa.empty:
+if not channel_usage_summary.empty:
     st.markdown("#### Canais mais usados por faixa etária (resumo)")
-
-    # Para cada faixa, pega o canal com mais atendimentos
-    resumo = []
-    for faixa, grupo in uso_canal_faixa.groupby("faixa_idade"):
-        canal_top = grupo.sort_values("atendimentos", ascending=False).iloc[0]
-        resumo.append(
-            f"- Faixa **{faixa}**: canal mais utilizado é **{canal_top[col_canal]}** "
-            f"com **{canal_top['atendimentos']}** atendimentos."
+    lines = []
+    for age_group, group in channel_usage_summary.groupby("age_group"):
+        total_for_group = group["appointments"].sum()
+        if total_for_group == 0:
+            continue
+        top_row = group.sort_values("appointments", ascending=False).iloc[0]
+        lines.append(
+            f"- Faixa **{age_group}** → canal mais usado: **{top_row[channel_col]}** "
+            f"({top_row['appointments']} atendimentos)"
         )
-
-    st.markdown("\n".join(resumo))
+    st.markdown("\n".join(lines))
 
 st.markdown(
     """
----  
+---
 **Próximos passos (visão futura do CanalCerto):**  
 - Incorporar modelos preditivos para recomendar o **melhor canal** para cada perfil de paciente, considerando canal, sexo, idade, histórico de conversão e cancelamento.  
 - Adicionar alertas para canais com queda brusca de conversão ou aumento de cancelamentos.
