@@ -39,6 +39,8 @@ AGE_COLOR_SCALE = alt.Scale(
     range=[BLUE_LIGHT, BLUE_MEDIUM, BLUE_DARK, PURPLE_LIGHT, PURPLE_MEDIUM],
 )
 
+DIGITAL_CHANNELS = ["App", "WhatsApp", "SMS"] 
+
 # ============================
 # Page config
 # ============================
@@ -595,6 +597,133 @@ with col_pf4:
 
     st.altair_chart(usage_chart, use_container_width=True)
 
+    # ============================
+# 5.1. Análises avançadas
+# ============================
+
+st.markdown("## Análises avançadas")
+
+col_adv1, col_adv2 = st.columns(2)
+
+# ----------------------------------------
+# A) Idade x probabilidade de agendamento digital
+# ----------------------------------------
+with col_adv1:
+    st.markdown("### Idade x probabilidade de agendamento digital")
+
+    if not filtered_valid_age_df.empty:
+        age_digital_df = (
+            filtered_valid_age_df
+            .assign(
+                is_digital=lambda d: d[channel_col].isin(DIGITAL_CHANNELS)
+            )
+            .groupby("age_group")
+            .agg(
+                total_appointments=(id_col, "count"),
+                digital_appointments=("is_digital", "sum"),
+            )
+        )
+
+        age_digital_df["digital_rate"] = (
+            age_digital_df["digital_appointments"]
+            / age_digital_df["total_appointments"]
+            * 100
+        ).round(2)
+
+        age_digital_df = age_digital_df.reset_index()
+
+        base_digital_age = alt.Chart(age_digital_df).encode(
+            x=alt.X("age_group:N", title="Faixa etária"),
+        )
+
+        bars_digital_age = base_digital_age.mark_bar().encode(
+            y=alt.Y("digital_rate:Q", title="Probabilidade de agendamento digital (%)"),
+            color=alt.Color(
+                "age_group:N",
+                scale=AGE_COLOR_SCALE,
+                title="Faixa etária",
+            ),
+            tooltip=[
+                "age_group",
+                alt.Tooltip("digital_rate:Q", title="Prob. digital (%)", format=".2f"),
+                "total_appointments",
+                "digital_appointments",
+            ],
+        )
+
+        line_digital_age = base_digital_age.mark_line(color="#FFFFFF", point=True).encode(
+            y="digital_rate:Q"
+        )
+
+        digital_age_chart = (bars_digital_age + line_digital_age).properties(
+            background="transparent"
+        )
+
+        st.altair_chart(digital_age_chart, use_container_width=True)
+    else:
+        st.info("Não há dados suficientes para calcular a probabilidade de agendamento digital por faixa etária.")
+
+# ----------------------------------------
+# B) Tipo de especialidade x canal
+# ----------------------------------------
+with col_adv2:
+    st.markdown("### Tipo de especialidade x canal")
+
+    # usar o dataframe filtrado principal (todas idades)
+    if not filtered_df.empty:
+        # pegar as 5 especialidades com maior volume
+        top_specialties = (
+            filtered_df
+            .groupby(specialty_col)[id_col]
+            .count()
+            .sort_values(ascending=False)
+            .head(5)
+            .index
+            .tolist()
+        )
+
+        specialty_channel_df = (
+            filtered_df[filtered_df[specialty_col].isin(top_specialties)]
+            .groupby([specialty_col, channel_col])[id_col]
+            .count()
+            .reset_index(name="appointments")
+        )
+
+        # normalizar por especialidade para mostrar proporção (0–100%)
+        specialty_totals = (
+            specialty_channel_df
+            .groupby(specialty_col)["appointments"]
+            .transform("sum")
+        )
+        specialty_channel_df["percentage"] = (
+            specialty_channel_df["appointments"] / specialty_totals * 100
+        ).round(2)
+
+        specialty_chart = (
+            alt.Chart(specialty_channel_df)
+            .mark_bar()
+            .encode(
+                x=alt.X(f"{specialty_col}:N", title="Especialidade"),
+                y=alt.Y("percentage:Q", title="Participação do canal (%)", stack="normalize"),
+                color=alt.Color(
+                    f"{channel_col}:N",
+                    title="Canal",
+                    scale=channel_color_scale,
+                ),
+                tooltip=[
+                    specialty_col,
+                    channel_col,
+                    "appointments",
+                    alt.Tooltip("percentage:Q", title="Participação (%)", format=".2f"),
+                ],
+            )
+            .properties(background="transparent")
+        )
+
+        st.altair_chart(specialty_chart, use_container_width=True)
+    else:
+        st.info("Não há dados suficientes para analisar especialidade x canal.")
+
 # ============================
 # 6. Automatic insights
 # ============================
@@ -663,7 +792,7 @@ if not large_sample_channels.empty:
 
 st.markdown("---")
 
-st.markdown("### 👥 Insights por idade")
+st.markdown("### 👥 Por idade")
 
 if not conversion_by_age.empty:
     best_conv_age = conversion_by_age.sort_values("conversion_rate", ascending=False).head(1)
@@ -699,26 +828,102 @@ if not conversion_by_age.empty:
         icon="⚠️",
     )
 
-channel_usage_summary = (
-    filtered_valid_age_df
-    .groupby(["age_group", channel_col])[id_col]
-    .count()
-    .reset_index(name="appointments")
-)
+st.markdown("---")
 
-if not channel_usage_summary.empty:
-    st.markdown("#### Canais mais usados por faixa etária (resumo)")
-    lines = []
-    for age_group, group in channel_usage_summary.groupby("age_group"):
-        total_for_group = group["appointments"].sum()
-        if total_for_group == 0:
-            continue
-        top_row = group.sort_values("appointments", ascending=False).iloc[0]
-        lines.append(
-            f"- Faixa **{age_group}** → canal mais usado: **{top_row[channel_col]}** "
-            f"({top_row['appointments']} atendimentos)"
-        )
-    st.markdown("\n".join(lines))
+st.markdown("### 📱 Comportamento digital")
+
+if not age_digital_df.empty:
+    top_digital_age = age_digital_df.sort_values("digital_rate", ascending=False).head(1)
+    age_top = top_digital_age["age_group"].iloc[0]
+    rate_top = top_digital_age["digital_rate"].iloc[0]
+
+    insight_box(
+        f"<b>Faixa etária mais digital:</b> {age_top} — probabilidade de "
+        f"<b>{rate_top:.2f}%</b> de agendamento via canais digitais.",
+        tone="info",
+        icon="📊",
+    )
+
+    bottom_digital_age = age_digital_df.sort_values("digital_rate", ascending=True).head(1)
+    age_low = bottom_digital_age["age_group"].iloc[0]
+    rate_low = bottom_digital_age["digital_rate"].iloc[0]
+
+    insight_box(
+        f"<b>Faixa menos digital:</b> {age_low} — apenas <b>{rate_low:.2f}%</b> utilizam App, WhatsApp ou SMS.",
+        tone="warning",
+        icon="⚠️",
+    )
+
+    gap = rate_top - rate_low
+    insight_box(
+        f"A diferença entre o público mais e o menos digital é de <b>{gap:.2f} pontos percentuais</b>, "
+        f"indicando potencial para estratégias segmentadas por idade.",
+        tone="info",
+        icon="📈",
+    )
+else:
+    insight_box("Não há dados suficientes para gerar insights digitais por idade.", tone="warning")
+
+st.markdown("---")
+
+st.markdown("### 🏥 Tipo de especialidade")
+
+if not specialty_channel_df.empty:
+
+    for canal in channel_domain:
+        df_canal = specialty_channel_df[specialty_channel_df[channel_col] == canal]
+        if not df_canal.empty:
+            top_spec = df_canal.sort_values("percentage", ascending=False).head(1)
+            spec_name = top_spec[specialty_col].iloc[0]
+            pct = top_spec["percentage"].iloc[0]
+
+            insight_box(
+                f"O canal <b>{canal}</b> é mais utilizado na especialidade <b>{spec_name}</b> "
+                f"({pct:.2f}% dos atendimentos desta especialidade).",
+                tone="info",
+                icon="📌",
+            )
+
+    dig_df = specialty_channel_df[specialty_channel_df[channel_col].isin(DIGITAL_CHANNELS)]
+    dig_group = (
+        dig_df.groupby(specialty_col)["percentage"]
+        .sum()
+        .sort_values(ascending=False)
+        .reset_index()
+    )
+
+    top_digital_spec = dig_group.head(1)
+    spec_dig = top_digital_spec[specialty_col].iloc[0]
+    pct_dig = top_digital_spec["percentage"].iloc[0]
+
+    insight_box(
+        f"A especialidade mais digital é <b>{spec_dig}</b>, com <b>{pct_dig:.2f}%</b> dos seus "
+        f"agendamentos realizados via App, WhatsApp ou SMS.",
+        tone="success",
+        icon="💡",
+    )
+
+    non_digital = specialty_channel_df[~specialty_channel_df[channel_col].isin(DIGITAL_CHANNELS)]
+    non_group = (
+        non_digital.groupby(specialty_col)["percentage"]
+        .sum()
+        .sort_values(ascending=False)
+        .reset_index()
+    )
+
+    top_nondigital_spec = non_group.head(1)
+    spec_nondig = top_nondigital_spec[specialty_col].iloc[0]
+    pct_nondig = top_nondigital_spec["percentage"].iloc[0]
+
+    insight_box(
+        f"A especialidade com maior dependência de canais tradicionais é <b>{spec_nondig}</b>, "
+        f"com <b>{pct_nondig:.2f}%</b> dos atendimentos ocorrendo via telefone ou presencial.",
+        tone="warning",
+        icon="☎️",
+    )
+
+else:
+    insight_box("Não há dados suficientes para gerar insights por especialidade.", tone="warning")
 
 st.markdown(
     """
