@@ -927,9 +927,16 @@ else:
 
 st.markdown(
     """
----
-**Próximos passos (visão futura do CanalCerto):**  
-- Incorporar modelos preditivos para recomendar o **melhor canal** para cada perfil de paciente, considerando canal, sexo, idade, histórico de conversão e cancelamento.  
-- Adicionar alertas para canais com queda brusca de conversão ou aumento de cancelamentos.
-"""
+    ---  
+    ### 🔮 Próximos passos (visão futura do CanalCerto)
+
+    O CanalCerto evoluirá para incorporar recursos avançados de inteligência analítica, incluindo:
+
+    - **Módulo preditivo** para estimar o canal mais provável de agendamento para cada paciente, considerando idade, sexo, comportamento digital, especialidade e histórico de conversão.
+    - **Detecção automática de anomalias**, identificando quedas repentinas de conversão ou aumentos incomuns de cancelamentos.
+    - **Recomendações inteligentes**, sugerindo ajustes operacionais, priorização de canais e oportunidades de otimização baseadas em padrões dos dados.
+    - **Aprimoramento do perfil digital do paciente**, permitindo segmentações mais precisas e ações personalizadas.
+        
+    Essas funcionalidades complementam o protótipo atual e representam a próxima fase de evolução da plataforma CanalCerto.
+    """
 )
